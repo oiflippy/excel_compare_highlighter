@@ -33,18 +33,22 @@
 
 ## 打包成 Windows EXE
 
-双击 `build_exe.bat`，或运行：
+双击 `build_exe.bat`。脚本会自动创建独立的临时构建环境 `.build_venv`，安装依赖并生成单文件 EXE。
+
+也可以手动运行：
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m PyInstaller --noconfirm --clean --windowed --name "ExcelCompareHighlighter" app.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name "ExcelCompareHighlighter" app.py
 ```
 
 打包结果在：
 
 ```text
-dist\ExcelCompareHighlighter\ExcelCompareHighlighter.exe
+dist\ExcelCompareHighlighter.exe
 ```
+
+生成的 EXE 已包含 Python 运行时和依赖库，目标电脑不需要额外安装 Python 或依赖包。
 
 ## 使用步骤
 

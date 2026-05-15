@@ -8,6 +8,7 @@ __pycache__/
 venv/
 env/
 myenv/
+.build_venv/
 
 # Build artifacts
 build/
