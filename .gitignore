@@ -1,0 +1,41 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+myenv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+tmp*/
+tmp_*/
+
+# Local app/user data
+profiles.json
+
+# Excel working files and sample data
+test_data/
+*_highlighted.xlsx
+*_高亮结果.xlsx
+~$*.xls*
+*.xlsx
+*.xlsm
+*.xls
+!docs/**/*.xlsx
+!examples/**/*.xlsx
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
