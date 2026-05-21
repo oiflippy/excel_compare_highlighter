@@ -41,6 +41,8 @@ echo [4/5] Building standalone EXE...
     --clean ^
     --onefile ^
     --windowed ^
+    --icon "favicon.ico" ^
+    --add-data "favicon.ico;." ^
     --name "%APP_NAME%" ^
     app.py
 if errorlevel 1 goto :build_failed

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,10 +21,13 @@ APP_NAME = "Excel Compare Highlighter"
 SUPPORTED_EXTENSIONS = (".xlsx", ".xlsm", ".xltx", ".xltm")
 PREVIEW_LIMIT = 200
 PROFILE_LIMIT = 30
+MEMORY_LOGIC_LIMIT = 50
+MEMORY_SCHEMA_VERSION = 1
 BLANK_ROW_STOP_LIMIT = 200
 SHEET_PREVIEW_ROWS = 30
 SHEET_PREVIEW_COLUMNS = 40
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
+APP_ICON_NAME = "favicon.ico"
 
 
 @dataclass
@@ -67,8 +71,17 @@ def app_data_dir() -> Path:
     return path
 
 
+def resource_path(filename: str) -> Path:
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base_path / filename
+
+
 def profiles_path() -> Path:
     return app_data_dir() / "profiles.json"
+
+
+def memory_path() -> Path:
+    return app_data_dir() / "memory.json"
 
 
 def load_profiles() -> list[dict[str, Any]]:
@@ -88,6 +101,56 @@ def save_profiles(profiles: list[dict[str, Any]]) -> None:
         encoding="utf-8",
     )
 
+
+def default_memory() -> dict[str, Any]:
+    return {
+        "version": MEMORY_SCHEMA_VERSION,
+        "table_logic_memories": [],
+    }
+
+
+def load_memory() -> dict[str, Any]:
+    path = memory_path()
+    if not path.exists():
+        return default_memory()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default_memory()
+    if not isinstance(data, dict):
+        return default_memory()
+    memory = default_memory()
+    value = data.get("table_logic_memories")
+    if isinstance(value, list):
+        memory["table_logic_memories"] = [item for item in value if isinstance(item, dict)]
+    return memory
+
+
+def save_memory(memory: dict[str, Any]) -> None:
+    memory["version"] = MEMORY_SCHEMA_VERSION
+    memory["table_logic_memories"] = list(memory.get("table_logic_memories", []))[:MEMORY_LOGIC_LIMIT]
+    memory_path().write_text(
+        json.dumps(memory, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_memory_profiles() -> list[dict[str, Any]]:
+    return load_memory().get("table_logic_memories", [])
+
+
+def rolling_prepend(
+    items: list[dict[str, Any]],
+    new_item: dict[str, Any],
+    key_fields: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, Any]]:
+    remaining = [
+        item
+        for item in items
+        if not all(item.get(field) == new_item.get(field) for field in key_fields)
+    ]
+    return [new_item, *remaining][:limit]
 
 def normalize_header(value: Any) -> str:
     return str(value or "").strip()
@@ -591,6 +654,7 @@ class ExcelCompareApp(ttk.Frame):
         self.latest_keys_count = 0
         self._busy = False
         self.task_buttons: list[ttk.Widget] = []
+        self.memory = load_memory()
 
         self._build_ui()
 
@@ -1316,7 +1380,7 @@ class ExcelCompareApp(ttk.Frame):
             self.status.set(f"已自动套用相似配置：{profile_name}")
 
     def apply_best_profile(self, source: SheetInfo, target: SheetInfo) -> str | None:
-        profiles = load_profiles()
+        profiles = [*load_memory_profiles(), *load_profiles()]
         source_sig = header_signature(source.headers)
         target_sig = header_signature(target.headers)
         best_profile: dict[str, Any] | None = None
@@ -1507,6 +1571,25 @@ class ExcelCompareApp(ttk.Frame):
         }
         profiles = [item for item in profiles if item.get("name") != profile["name"]]
         save_profiles([profile, *profiles])
+        self.save_memory_profile(profile)
+
+    def save_memory_profile(self, profile: dict[str, Any]) -> None:
+        memory_profile = dict(profile)
+        memory_profile["memory_key"] = self._profile_memory_key(profile)
+        self.memory = load_memory()
+        memories = self.memory.get("table_logic_memories", [])
+        self.memory["table_logic_memories"] = rolling_prepend(
+            memories,
+            memory_profile,
+            ("memory_key",),
+            MEMORY_LOGIC_LIMIT,
+        )
+        save_memory(self.memory)
+
+    def _profile_memory_key(self, profile: dict[str, Any]) -> str:
+        source_signature = ",".join(str(item) for item in profile.get("source_signature", []))
+        target_signature = ",".join(str(item) for item in profile.get("target_signature", []))
+        return f"{source_signature}||{target_signature}"
 
     def _selected_context(self) -> CompareContext:
         source = self._sheet_info(kind="source", read_headers_now=not self.source_headers)
@@ -1612,6 +1695,12 @@ class ExcelCompareApp(ttk.Frame):
 
 def main() -> None:
     root = tk.Tk()
+    icon_path = resource_path(APP_ICON_NAME)
+    if icon_path.exists():
+        try:
+            root.iconbitmap(default=str(icon_path))
+        except tk.TclError:
+            pass
     style = ttk.Style(root)
     if "vista" in style.theme_names():
         style.theme_use("vista")
