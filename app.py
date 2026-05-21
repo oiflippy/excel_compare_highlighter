@@ -27,7 +27,6 @@ BLANK_ROW_STOP_LIMIT = 200
 SHEET_PREVIEW_ROWS = 30
 SHEET_PREVIEW_COLUMNS = 40
 COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
-APP_ICON_NAME = "favicon.ico"
 
 
 @dataclass
@@ -74,6 +73,11 @@ def app_data_dir() -> Path:
 def resource_path(filename: str) -> Path:
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base_path / filename
+
+
+def find_app_icon() -> Path | None:
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return next(iter(sorted(base_path.glob("*.ico"))), None)
 
 
 def profiles_path() -> Path:
@@ -1695,8 +1699,8 @@ class ExcelCompareApp(ttk.Frame):
 
 def main() -> None:
     root = tk.Tk()
-    icon_path = resource_path(APP_ICON_NAME)
-    if icon_path.exists():
+    icon_path = find_app_icon()
+    if icon_path:
         try:
             root.iconbitmap(default=str(icon_path))
         except tk.TclError:

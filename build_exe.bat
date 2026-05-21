@@ -4,6 +4,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "APP_NAME=ExcelCompareHighlighter"
+set "APP_ICON="
 set "BUILD_VENV=.build_venv"
 set "PYTHON_CMD=py -3"
 
@@ -36,15 +37,31 @@ if errorlevel 1 goto :build_failed
 if errorlevel 1 goto :build_failed
 
 echo [4/5] Building standalone EXE...
-"%BUILD_VENV%\Scripts\python.exe" -m PyInstaller ^
-    --noconfirm ^
-    --clean ^
-    --onefile ^
-    --windowed ^
-    --icon "favicon.ico" ^
-    --add-data "favicon.ico;." ^
-    --name "%APP_NAME%" ^
-    app.py
+for %%I in (*.ico) do (
+    if not defined APP_ICON set "APP_ICON=%%~nxI"
+)
+
+if defined APP_ICON (
+    echo Using icon: %APP_ICON%
+    "%BUILD_VENV%\Scripts\python.exe" -m PyInstaller ^
+        --noconfirm ^
+        --clean ^
+        --onefile ^
+        --windowed ^
+        --icon "%APP_ICON%" ^
+        --add-data "%APP_ICON%;." ^
+        --name "%APP_NAME%" ^
+        app.py
+) else (
+    echo No .ico file found; building with the default application icon.
+    "%BUILD_VENV%\Scripts\python.exe" -m PyInstaller ^
+        --noconfirm ^
+        --clean ^
+        --onefile ^
+        --windowed ^
+        --name "%APP_NAME%" ^
+        app.py
+)
 if errorlevel 1 goto :build_failed
 
 echo [5/5] Done.
