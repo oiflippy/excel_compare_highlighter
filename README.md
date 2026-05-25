@@ -79,9 +79,12 @@ dist\ExcelCompareHighlighter.exe
 ```text
 %APPDATA%\Excel Compare Highlighter\profiles.json
 %APPDATA%\Excel Compare Highlighter\memory.json
+%APPDATA%\Excel Compare Highlighter\color_rules.json
 ```
 
-`memory.json` 按“表 A 表头结构 + 表 B 表头结构”记住对应的查找列、指定项列、行范围、填色列、颜色规则和大小写设置。下次选择结构相同或高度相似的两个表时，会自动套用之前的查找逻辑。记忆最多保留 50 条，新的同结构记录会覆盖旧记录，超出上限会自动滚动删除。
+`memory.json` 按“表 A 表头结构 + 表 B 表头结构”记住对应的查找列、指定项列、行范围、填色列和大小写设置。下次选择结构相同或高度相似的两个表时，会自动套用之前的查找逻辑。记忆最多保留 50 条，新的同结构记录会覆盖旧记录，超出上限会自动滚动删除。
+
+`color_rules.json` 独立保存自定义颜色规则，关闭软件后再次打开仍会保留；自动套用相似表格记忆时不会覆盖当前颜色规则。
 
 ## 兼容性说明
 

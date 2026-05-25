@@ -91,6 +91,10 @@ def memory_path() -> Path:
     return app_data_dir() / "memory.json"
 
 
+def color_rules_path() -> Path:
+    return app_data_dir() / "color_rules.json"
+
+
 def load_profiles() -> list[dict[str, Any]]:
     path = profiles_path()
     if not path.exists():
@@ -144,6 +148,44 @@ def save_memory(memory: dict[str, Any]) -> None:
 
 def load_memory_profiles() -> list[dict[str, Any]]:
     return load_memory().get("table_logic_memories", [])
+
+
+def load_legacy_color_rules() -> str:
+    for profile in [*load_memory_profiles(), *load_profiles()]:
+        rule_text = profile.get("rule_text")
+        if isinstance(rule_text, str) and rule_text.strip():
+            return rule_text
+    return ""
+
+
+def load_saved_color_rules() -> str:
+    path = color_rules_path()
+    if not path.exists():
+        rule_text = load_legacy_color_rules()
+        if rule_text:
+            save_color_rules(rule_text)
+        return rule_text
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        rule_text = load_legacy_color_rules()
+        if rule_text:
+            save_color_rules(rule_text)
+        return rule_text
+    if not isinstance(data, dict):
+        rule_text = load_legacy_color_rules()
+        if rule_text:
+            save_color_rules(rule_text)
+        return rule_text
+    rule_text = data.get("rule_text")
+    return rule_text if isinstance(rule_text, str) else ""
+
+
+def save_color_rules(rule_text: str) -> None:
+    color_rules_path().write_text(
+        json.dumps({"rule_text": rule_text}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def rolling_prepend(
@@ -756,7 +798,7 @@ class ExcelCompareApp(ttk.Frame):
         self.target_end_row = tk.StringVar()
         self.highlight_start_column = tk.StringVar()
         self.highlight_end_column = tk.StringVar()
-        self.rule_text = tk.StringVar()
+        self.rule_text = tk.StringVar(value=load_saved_color_rules())
         self.case_sensitive = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="请选择表 A 数据源和表 B 待填色文件。")
 
@@ -1476,7 +1518,9 @@ class ExcelCompareApp(ttk.Frame):
 
         def confirm() -> None:
             rules = [f"{value}={color_vars[value].get()}" for value in values if color_vars[value].get().strip()]
-            self.rule_text.set(";".join(rules))
+            rule_text = ";".join(rules)
+            self.rule_text.set(rule_text)
+            save_color_rules(rule_text)
             dialog.destroy()
 
         ttk.Button(button_frame, text="确认", command=confirm, width=12).pack(side="right", padx=(6, 0))
@@ -1528,7 +1572,6 @@ class ExcelCompareApp(ttk.Frame):
         self.highlight_end_column.set(
             "" if best_profile.get("highlight_end_column") is None else get_column_letter(int(best_profile["highlight_end_column"]))
         )
-        self.rule_text.set(best_profile.get("rule_text", self.rule_text.get()))
         self.case_sensitive.set(bool(best_profile.get("case_sensitive", False)))
         return str(best_profile.get("name") or f"相似度 {best_score:.0%}")
 
@@ -1678,7 +1721,6 @@ class ExcelCompareApp(ttk.Frame):
             "target_end_row": context.target_rows.end,
             "highlight_start_column": context.highlight_columns.start,
             "highlight_end_column": context.highlight_columns.end,
-            "rule_text": self.rule_text.get(),
             "case_sensitive": case_sensitive,
         }
         profiles = [item for item in profiles if item.get("name") != profile["name"]]
