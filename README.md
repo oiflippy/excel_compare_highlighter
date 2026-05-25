@@ -85,7 +85,7 @@ dist\ExcelCompareHighlighter.exe
 
 ## 兼容性说明
 
-- 支持 Office 2007 以后常见的 OpenXML Excel 格式。
-- 不支持旧版 `.xls`，如果需要处理，请先用 Excel 或 WPS 另存为 `.xlsx`。
+- 支持 Office 2007 以后常见的 OpenXML Excel 格式，也支持读取旧版 `.xls`。
+- 当表 B 是旧版 `.xls` 时，生成结果会另存为 `.xlsx`；单元格值会保留，但旧版 `.xls` 的原始样式可能不会完整保留。
 - `.xlsm` 会尽量保留宏结构，但建议导出后自行打开检查宏和格式。
 - 极大文件导出时需要足够内存，因为写入颜色必须加载目标工作簿。

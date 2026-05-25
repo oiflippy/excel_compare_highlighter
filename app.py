@@ -12,13 +12,16 @@ import re
 import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from openpyxl import load_workbook
+import xlrd
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter, column_index_from_string
 
 
 APP_NAME = "Excel Compare Highlighter"
-SUPPORTED_EXTENSIONS = (".xlsx", ".xlsm", ".xltx", ".xltm")
+OPENXML_EXTENSIONS = (".xlsx", ".xlsm", ".xltx", ".xltm")
+LEGACY_XLS_EXTENSION = ".xls"
+SUPPORTED_EXTENSIONS = (*OPENXML_EXTENSIONS, LEGACY_XLS_EXTENSION)
 PREVIEW_LIMIT = 200
 PROFILE_LIMIT = 30
 MEMORY_LOGIC_LIMIT = 50
@@ -241,12 +244,115 @@ def parse_color_rules(value: str, *, case_sensitive: bool) -> dict[str, str]:
 
 def ensure_supported_excel(path: Path) -> None:
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        raise ValueError("当前版本支持 .xlsx / .xlsm / .xltx / .xltm，暂不支持旧版 .xls。")
+        raise ValueError("当前版本支持 .xlsx / .xlsm / .xltx / .xltm / .xls。")
+
+
+def is_legacy_xls(path: Path) -> bool:
+    return path.suffix.lower() == LEGACY_XLS_EXTENSION
+
+
+class LegacyXlsWorksheet:
+    def __init__(self, sheet: Any, datemode: int) -> None:
+        self._sheet = sheet
+        self._datemode = datemode
+        self.max_row = sheet.nrows
+        self.max_column = sheet.ncols
+
+    def cell_value(self, row_index: int, column_index: int) -> Any:
+        cell = self._sheet.cell(row_index, column_index)
+        if cell.ctype in {xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK}:
+            return None
+        if cell.ctype == xlrd.XL_CELL_NUMBER and isinstance(cell.value, float):
+            return int(cell.value) if cell.value.is_integer() else cell.value
+        if cell.ctype == xlrd.XL_CELL_DATE:
+            return xlrd.xldate.xldate_as_datetime(cell.value, self._datemode)
+        if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+            return bool(cell.value)
+        return cell.value
+
+    def iter_rows(
+        self,
+        *,
+        min_row: int = 1,
+        max_row: int | None = None,
+        min_col: int = 1,
+        max_col: int | None = None,
+        values_only: bool = True,
+    ) -> Any:
+        del values_only
+        row_end = min(max_row or self.max_row, self.max_row)
+        col_end = min(max_col or self.max_column, self.max_column)
+        for row_number in range(min_row, row_end + 1):
+            row_values: list[Any] = []
+            for column_number in range(min_col, col_end + 1):
+                if row_number <= self.max_row and column_number <= self.max_column:
+                    row_values.append(self.cell_value(row_number - 1, column_number - 1))
+                else:
+                    row_values.append(None)
+            yield tuple(row_values)
+
+
+class LegacyXlsWorkbook:
+    def __init__(self, path: Path) -> None:
+        self._workbook = xlrd.open_workbook(path)
+        self.sheetnames = self._workbook.sheet_names()
+
+    def __getitem__(self, sheet_name: str) -> LegacyXlsWorksheet:
+        return LegacyXlsWorksheet(self._workbook.sheet_by_name(sheet_name), self._workbook.datemode)
+
+    def close(self) -> None:
+        self._workbook.release_resources()
+
+
+def open_read_workbook(path: Path) -> Any:
+    ensure_supported_excel(path)
+    if is_legacy_xls(path):
+        return LegacyXlsWorkbook(path)
+    return load_workbook(path, read_only=True, data_only=True)
+
+
+def copy_xls_to_xlsx_with_highlight(
+    target: SheetInfo,
+    row_colors: dict[int, str],
+    column_range: ColumnRange,
+    output_path: Path,
+) -> None:
+    source_workbook = open_read_workbook(target.path)
+    output_workbook = Workbook()
+    try:
+        default_sheet = output_workbook.active
+        for index, sheet_name in enumerate(source_workbook.sheetnames):
+            source_sheet = source_workbook[sheet_name]
+            output_sheet = default_sheet if index == 0 else output_workbook.create_sheet()
+            output_sheet.title = sheet_name[:31]
+
+            start_column = column_range.start or 1
+            end_column = column_range.end or source_sheet.max_column
+            fills = {
+                row_number: PatternFill(fill_type="solid", fgColor=validate_color_hex(color).replace("#", ""))
+                for row_number, color in row_colors.items()
+            }
+            for row_number, row in read_effective_rows(
+                source_sheet,
+                min_row=1,
+                max_row=source_sheet.max_row,
+                min_col=1,
+                max_col=source_sheet.max_column,
+            ):
+                for column_number, value in enumerate(row, start=1):
+                    output_sheet.cell(row=row_number, column=column_number, value=value)
+                fill = fills.get(row_number) if sheet_name == target.sheet else None
+                if fill:
+                    for column_number in range(start_column, end_column + 1):
+                        output_sheet.cell(row=row_number, column=column_number).fill = fill
+        output_workbook.save(output_path)
+    finally:
+        source_workbook.close()
+        output_workbook.close()
 
 
 def read_sheet_names(path: Path) -> list[str]:
-    ensure_supported_excel(path)
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = open_read_workbook(path)
     try:
         return list(workbook.sheetnames)
     finally:
@@ -254,8 +360,7 @@ def read_sheet_names(path: Path) -> list[str]:
 
 
 def read_headers(path: Path, sheet_name: str, header_row: int) -> list[str]:
-    ensure_supported_excel(path)
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = open_read_workbook(path)
     try:
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"{path.name} 中没有工作表：{sheet_name}。")
@@ -308,8 +413,7 @@ def read_sheet_preview(
     max_rows: int = SHEET_PREVIEW_ROWS,
     max_cols: int = SHEET_PREVIEW_COLUMNS,
 ) -> tuple[list[str], list[list[Any]]]:
-    ensure_supported_excel(path)
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = open_read_workbook(path)
     try:
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"{path.name} 中没有工作表：{sheet_name}。")
@@ -447,7 +551,7 @@ def build_key_set(
     *,
     case_sensitive: bool,
 ) -> tuple[set[str], int, int]:
-    workbook = load_workbook(sheet.path, read_only=True, data_only=True)
+    workbook = open_read_workbook(sheet.path)
     keys: set[str] = set()
     total_rows = 0
     blank_rows = 0
@@ -484,7 +588,7 @@ def build_rule_map(
     total_rows = 0
     blank_rows = 0
     for sheet in sheets:
-        workbook = load_workbook(sheet.path, read_only=True, data_only=True)
+        workbook = open_read_workbook(sheet.path)
         try:
             worksheet = workbook[sheet.sheet]
             max_column = max(match_column, rule_column)
@@ -520,7 +624,7 @@ def scan_target_matches(
     case_sensitive: bool,
     preview_limit: int | None = PREVIEW_LIMIT,
 ) -> tuple[list[int], list[list[Any]], int]:
-    workbook = load_workbook(sheet.path, read_only=True, data_only=True)
+    workbook = open_read_workbook(sheet.path)
     matched_rows: list[int] = []
     preview_rows: list[list[Any]] = []
     scanned = 0
@@ -557,7 +661,7 @@ def scan_target_rule_matches(
     case_sensitive: bool,
     preview_limit: int | None = PREVIEW_LIMIT,
 ) -> tuple[dict[int, str], list[list[Any]], int]:
-    workbook = load_workbook(sheet.path, read_only=True, data_only=True)
+    workbook = open_read_workbook(sheet.path)
     matched_rows: dict[int, str] = {}
     preview_rows: list[list[Any]] = []
     scanned = 0
@@ -599,11 +703,15 @@ def apply_highlight(
     column_range: ColumnRange,
     output_path: Path,
 ) -> None:
+    row_colors = matched_rows if isinstance(matched_rows, dict) else {row_number: color_hex for row_number in matched_rows}
+    if is_legacy_xls(target.path):
+        copy_xls_to_xlsx_with_highlight(target, row_colors, column_range, output_path)
+        return
+
     keep_vba = target.path.suffix.lower() in {".xlsm", ".xltm"}
     workbook = load_workbook(target.path, keep_vba=keep_vba)
     try:
         worksheet = workbook[target.sheet]
-        row_colors = matched_rows if isinstance(matched_rows, dict) else {row_number: color_hex for row_number in matched_rows}
         for row_number, row_color in row_colors.items():
             color = validate_color_hex(row_color).replace("#", "")
             fill = PatternFill(fill_type="solid", fgColor=color)
@@ -874,7 +982,7 @@ class ExcelCompareApp(ttk.Frame):
     def _pick_file(self, path_var: tk.StringVar, sheet_box: ttk.Combobox, sheet_var: tk.StringVar) -> None:
         filename = filedialog.askopenfilename(
             title="选择 Excel 文件",
-            filetypes=[("Excel 文件", "*.xlsx *.xlsm *.xltx *.xltm"), ("所有文件", "*.*")],
+            filetypes=[("Excel 文件", "*.xlsx *.xlsm *.xltx *.xltm *.xls"), ("所有文件", "*.*")],
         )
         if not filename:
             return
@@ -1313,7 +1421,7 @@ class ExcelCompareApp(ttk.Frame):
         row_range = parse_row_range(self.source_start_row.get(), self.source_end_row.get(), source.header_row + 1, "表 A ")
         values: set[str] = set()
         for path in source_paths:
-            workbook = load_workbook(path, read_only=True, data_only=True)
+            workbook = open_read_workbook(path)
             try:
                 worksheet = workbook[source.sheet]
                 for _, row in read_effective_rows(worksheet, min_row=row_range.start, max_row=row_range.end, min_col=1, max_col=rule_column):
@@ -1484,7 +1592,7 @@ class ExcelCompareApp(ttk.Frame):
             context = self._selected_context()
             case_sensitive = self.case_sensitive.get()
             target_path = Path(self.target_path.get())
-            suffix = target_path.suffix or ".xlsx"
+            suffix = ".xlsx" if is_legacy_xls(target_path) else (target_path.suffix or ".xlsx")
             default_name = f"{target_path.stem}_高亮结果{suffix}"
             output = filedialog.asksaveasfilename(
                 title="保存高亮后的 Excel 文件",
